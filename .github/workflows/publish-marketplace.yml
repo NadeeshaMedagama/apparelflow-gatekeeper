@@ -1,0 +1,118 @@
+name: Publish Marketplace
+
+# Publishes the root action.yml ("ApparelFlow Gatekeeper Audit") for use as
+#   uses: <owner>/<repo>@v1
+# by validating the metadata, making sure the GitHub release exists, and moving
+# the floating major tag (v1, v2, …) to the release.
+#
+# One-time step: GitHub has no API for listing an action on the Marketplace.
+# For the first release, open it, click "Edit", tick "Publish this Action to
+# the GitHub Marketplace", accept the agreement and update the release.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to publish (vX.Y.Z)
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v1.2.0)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-marketplace
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate action metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Validate action.yml against Marketplace requirements
+        run: |
+          set -euo pipefail
+          if [ -f action.yaml ]; then
+            echo "::error file=action.yaml::Keep a single metadata file — remove action.yaml (action.yml is used)."
+            exit 1
+          fi
+          for field in .name .description .author .branding.icon .branding.color .runs.using; do
+            value="$(yq -r "$field" action.yml)"
+            if [ -z "$value" ] || [ "$value" = "null" ]; then
+              echo "::error file=action.yml::Missing required field $field"
+              exit 1
+            fi
+          done
+          description="$(yq -r .description action.yml)"
+          if [ "${#description}" -gt 125 ]; then
+            echo "::warning file=action.yml::The description is ${#description} characters; the Marketplace card truncates long descriptions."
+          fi
+          node --check scripts/audit-api.mjs
+          echo "action.yml is valid: $(yq -r .name action.yml)"
+
+  publish:
+    name: Release & move the major tag
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Validate tag
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Stable tag required::'$TAG' must be a stable version tag such as v1.2.3."
+            exit 1
+          fi
+
+      - name: Check out the release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Ensure the GitHub release exists
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "ApparelFlow ERP $TAG"
+          fi
+
+      - name: Move the floating major tag
+        run: |
+          major="${TAG%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force --annotate "$major" --message "ApparelFlow Gatekeeper Audit $TAG" "${TAG}^{commit}"
+          git push --force origin "refs/tags/$major"
+          echo "major=$major" >> "$GITHUB_ENV"
+
+      - name: Summary
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          {
+            echo "### 🛒 ApparelFlow Gatekeeper Audit $TAG"
+            echo ""
+            echo "Available as \`uses: $REPOSITORY@$major\` (or pin \`@$TAG\`)."
+            echo ""
+            echo "First release only: open $(gh release view "$TAG" --json url --jq .url), click **Edit**, tick"
+            echo "**Publish this Action to the GitHub Marketplace**, accept the agreement and update the release."
+          } >> "$GITHUB_STEP_SUMMARY"
