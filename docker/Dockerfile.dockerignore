@@ -1,0 +1,27 @@
+# Build-context filter for docker/Dockerfile (BuildKit uses <Dockerfile>.dockerignore
+# from the Dockerfile's directory). Paths are relative to the repository root.
+# Keep the context small and free of secrets.
+.git
+.github
+.idea
+.vscode
+.vercel
+.next
+node_modules
+coverage
+playwright-report
+test-results
+blob-report
+tests
+docs
+docker
+assessment
+scripts
+*.tsbuildinfo
+next-env.d.ts
+.env
+.env.*
+action.yml
+*.md
+npm-debug.log*
+.DS_Store
