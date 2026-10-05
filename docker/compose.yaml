@@ -1,0 +1,25 @@
+# Optional local PostgreSQL for development and the test suites.
+#   npm run docker:db          (= docker compose -f docker/compose.yaml up -d db)
+# Matches the defaults in .env.example (postgres / postgres on localhost:5432).
+# Not needed if PostgreSQL is installed locally — see docs/local-development.md.
+name: apparelflow
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: apparelflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - apparelflow-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  apparelflow-db:

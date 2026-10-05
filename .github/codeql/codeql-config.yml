@@ -1,0 +1,14 @@
+name: ApparelFlow CodeQL configuration
+
+# security-extended adds lower-precision security queries on top of the default suite.
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  - node_modules
+  - .next
+  - coverage
+  - playwright-report
+  - test-results
+  # Test fixtures deliberately use the public demo credentials and tamper payloads.
+  - tests

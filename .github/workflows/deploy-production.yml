@@ -1,0 +1,118 @@
+name: Deploy Production
+
+# Applies pending database migrations, builds with the Vercel CLI, deploys to
+# production, then smoke-tests the live site with the read-only gatekeeper audit.
+# Called by the CI/CD pipeline after every green push to `main`, or run manually.
+#
+# Secrets (repository or "production" environment):
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID   — Vercel CLI access
+#   PRODUCTION_DIRECT_URL                            — direct (non-pooled) PostgreSQL URL for migrations
+# Variables (optional):
+#   PRODUCTION_URL                                   — public URL used for the smoke test, e.g. https://apparelflow.vercel.app
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit SHA to deploy
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Migrate & deploy to Vercel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL || steps.deploy.outputs.url }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      PRODUCTION_DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL }}
+      VERCEL_CLI_VERSION: "62"
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check deployment configuration
+        id: config
+        run: |
+          missing=()
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID PRODUCTION_DIRECT_URL; do
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::warning title=Production deployment skipped::Missing secrets: ${missing[*]}. Add them under Settings → Secrets and variables → Actions (or the 'production' environment)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          # No dependency cache in a job that holds production secrets (cache-poisoning hardening).
+          package-manager-cache: false
+
+      - name: Install dependencies
+        if: steps.config.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Apply database migrations
+        if: steps.config.outputs.ready == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Install the Vercel CLI
+        if: steps.config.outputs.ready == 'true'
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      - name: Pull Vercel production settings
+        if: steps.config.outputs.ready == 'true'
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build
+        if: steps.config.outputs.ready == 'true'
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy
+        id: deploy
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          url="$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### 🚀 Deployed to production" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test — read-only gatekeeper audit
+        if: steps.config.outputs.ready == 'true' && vars.PRODUCTION_URL != ''
+        uses: ./
+        with:
+          base-url: ${{ vars.PRODUCTION_URL }}
+          mode: read-only
+          wait-seconds: "120"
+
+      - name: Smoke test skipped
+        if: steps.config.outputs.ready == 'true' && vars.PRODUCTION_URL == ''
+        run: echo "::notice title=Smoke test skipped::Set the PRODUCTION_URL repository variable to audit the live site after each deployment."
