@@ -1,0 +1,78 @@
+# Dependabot version updates. Security updates are enabled separately under
+# Settings → Code security and are not subject to the cooldown below.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Colombo
+    open-pull-requests-limit: 10
+    # Supply-chain hygiene: let new releases age before they are proposed.
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # Prisma 7 replaces the query engine with driver adapters — upgrade deliberately.
+      - dependency-name: prisma
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
+      # eslint-config-next pins ESLint 9; move together with it.
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      # Keep Node typings aligned with the runtime in .nvmrc.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    # "/" covers .github/workflows and the root action.yml.
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Colombo
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    # The production image is defined in docker/Dockerfile.
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Colombo
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: build
+      include: scope
+    ignore:
+      # Stay on the Node.js LTS line in .nvmrc; switch majors deliberately.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
