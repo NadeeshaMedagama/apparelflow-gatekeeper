@@ -1,0 +1,54 @@
+name: Dependabot Auto-merge
+
+# Approves and enables auto-merge (squash) for Dependabot patch and minor
+# updates. GitHub merges them only after the required status checks pass.
+# Major updates are never auto-merged; they get a comment asking for a human review.
+#
+# Repository settings required:
+#   Settings → General → "Allow auto-merge"
+#   Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"
+#   A branch ruleset on main that requires the CI/CD Pipeline checks to pass
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    name: Auto-merge safe updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve patch and minor updates
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: |
+          if ! gh pr review --approve "$PR_URL" --body "Patch/minor dependency update — approved automatically; merges once CI passes."; then
+            echo "::warning title=Approval skipped::Enable 'Allow GitHub Actions to create and approve pull requests' to let this workflow approve Dependabot PRs."
+          fi
+
+      - name: Enable auto-merge for patch and minor updates
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+
+      - name: Flag major updates for manual review
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major' && github.event.action == 'opened'
+        env:
+          DEPENDENCIES: ${{ steps.metadata.outputs.dependency-names }}
+          PREVIOUS_VERSION: ${{ steps.metadata.outputs.previous-version }}
+          NEW_VERSION: ${{ steps.metadata.outputs.new-version }}
+        run: |
+          gh pr comment "$PR_URL" --body "⚠️ **Major update** of \`${DEPENDENCIES}\` (${PREVIOUS_VERSION} → ${NEW_VERSION}). Review the release notes and breaking changes before merging — this PR is not auto-merged."
