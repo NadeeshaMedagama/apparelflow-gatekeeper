@@ -1,0 +1,178 @@
+name: Release
+
+# Cut a release by pushing a semantic-version tag that matches package.json:
+#   npm version 1.1.0 --no-git-tag-version && git commit -am "chore(release): v1.1.0"
+#   git tag v1.1.0 && git push origin main v1.1.0
+# The tag is verified, a GitHub Release with categorised notes is created, and
+# the Docker Hub image, the GHCR image and the Marketplace action are published.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v1.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=Invalid tag::'$TAG' is not a semantic version tag such as v1.2.3"
+            exit 1
+          fi
+          prerelease=false
+          if [[ "$TAG" == *-* ]]; then prerelease=true; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          persist-credentials: false
+
+      - name: Check package.json version matches the tag
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          version="$(jq -r .version package.json)"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error title=Version mismatch::package.json is $version but the tag is $TAG. Run 'npm version ${TAG#v} --no-git-tag-version', commit, and tag that commit."
+            exit 1
+          fi
+
+  verify:
+    name: Verify release candidate
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: apparelflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/apparelflow_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/apparelflow_test?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/apparelflow_test?schema=public
+      AUTH_SECRET: ci-only-secret-0123456789abcdefghijklmnopqrstuvwxyz
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit & integration tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  github-release:
+    name: Create GitHub release
+    needs: [prepare, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — leaving its notes unchanged."
+          else
+            args=(--verify-tag --generate-notes --title "ApparelFlow ERP $TAG")
+            if [ "$PRERELEASE" = "true" ]; then args+=(--prerelease); else args+=(--latest); fi
+            gh release create "$TAG" "${args[@]}"
+          fi
+          echo "### 🏷️ Release $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh release view "$TAG" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"
+
+  dockerhub:
+    name: Docker Hub image
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-dockerhub.yml
+    with:
+      version: ${{ needs.prepare.outputs.tag }}
+      ref: refs/tags/${{ needs.prepare.outputs.tag }}
+    secrets: inherit
+
+  ghcr:
+    name: GitHub Packages image
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-ghcr.yml
+    with:
+      version: ${{ needs.prepare.outputs.tag }}
+      ref: refs/tags/${{ needs.prepare.outputs.tag }}
+
+  marketplace:
+    name: Marketplace action
+    needs: [prepare, github-release]
+    if: needs.prepare.outputs.prerelease == 'false'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-marketplace.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
