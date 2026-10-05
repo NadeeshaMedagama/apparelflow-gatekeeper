@@ -1,0 +1,76 @@
+name: ApparelFlow Gatekeeper Audit
+description: "Audits an ApparelFlow ERP deployment: RBAC 403s, the 422 verification hard stop, forged identity and Sewing Queue isolation."
+author: Nadeesha Medagama
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  base-url:
+    description: Base URL of the ApparelFlow deployment to audit, for example https://apparelflow.example.com
+    required: true
+  mode:
+    description: >-
+      "read-only" (default) only sends requests that read data or that the server must reject, so it is safe
+      against production. "full" additionally creates a demo batch and drives it through shortage, rejection,
+      re-cut, approval and the Sewing Queue.
+    required: false
+    default: read-only
+  wait-seconds:
+    description: Seconds to wait for /api/health to report the database as up before the audit starts.
+    required: false
+    default: "60"
+  password:
+    description: Password of the three audit personas. Pass a secret for non-demo deployments.
+    required: false
+    default: ApparelFlow@2026
+  supervisor-email:
+    description: Email of a Cutting Supervisor account.
+    required: false
+    default: supervisor@apparelflow.demo
+  verifier-email:
+    description: Email of a Cutting Verifier account.
+    required: false
+    default: verifier@apparelflow.demo
+  sewing-email:
+    description: Email of a Sewing Supervisor account.
+    required: false
+    default: sewing@apparelflow.demo
+  node-version:
+    description: Node.js version used to run the audit (20 or newer).
+    required: false
+    default: "24"
+
+outputs:
+  passed:
+    description: Number of checks that passed.
+    value: ${{ steps.audit.outputs.passed }}
+  failed:
+    description: Number of checks that failed.
+    value: ${{ steps.audit.outputs.failed }}
+  skipped:
+    description: Number of checks skipped because the target had no suitable data.
+    value: ${{ steps.audit.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+
+    - name: Run the gatekeeper audit
+      id: audit
+      shell: bash
+      env:
+        AUDIT_BASE_URL: ${{ inputs.base-url }}
+        AUDIT_MODE: ${{ inputs.mode }}
+        AUDIT_WAIT_SECONDS: ${{ inputs.wait-seconds }}
+        AUDIT_PASSWORD: ${{ inputs.password }}
+        AUDIT_SUPERVISOR_EMAIL: ${{ inputs.supervisor-email }}
+        AUDIT_VERIFIER_EMAIL: ${{ inputs.verifier-email }}
+        AUDIT_SEWING_EMAIL: ${{ inputs.sewing-email }}
+      run: node "$GITHUB_ACTION_PATH/scripts/audit-api.mjs"
