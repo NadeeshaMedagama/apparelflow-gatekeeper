@@ -1,0 +1,44 @@
+name: Copilot Code Review
+
+# Requests a GitHub Copilot code review on every non-draft pull request.
+# Copilot follows the project rules in .github/copilot-instructions.md.
+#
+# Requirements: a GitHub Copilot plan that includes code review. If the built-in
+# token cannot request Copilot, add a COPILOT_REVIEW_TOKEN secret (a fine-grained
+# token of a Copilot-licensed user with "Pull requests: read and write"), or use
+# Settings → Rules → Rulesets → "Automatically request Copilot code review".
+#
+# Security: pull_request_target runs with base-repository permissions, so this
+# workflow never checks out or executes pull-request code.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: copilot-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request-review:
+    name: Request Copilot review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.draft == false && github.event.pull_request.user.type != 'Bot'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Request a review from GitHub Copilot
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_REVIEW_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if gh pr edit "$PR_NUMBER" --add-reviewer "@copilot"; then
+            echo "### 🤖 Copilot review requested for #$PR_NUMBER" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=Copilot review not requested::Copilot code review is unavailable for this token. Add a COPILOT_REVIEW_TOKEN secret or enable automatic Copilot review in a branch ruleset."
+          fi
