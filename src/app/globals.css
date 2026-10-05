@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/*
+ * ApparelFlow design tokens.
+ *
+ * Contrast policy (WCAG 2.2 AA, verified by the axe audit in tests/e2e):
+ *  - body text  slate-900 on white/slate-50       ≥ 15:1
+ *  - secondary  slate-600 on white                ≥ 7:1
+ *  - field borders slate-500 on white             ≥ 4.7:1 (non-text minimum is 3:1)
+ *  - placeholders slate-500 on white              ≥ 4.7:1
+ *  - status text uses the 800 shade on a 50/100 tint (≥ 6:1)
+ *
+ * The app is deliberately light-only. `color-scheme: light` stops an OS dark
+ * theme from repainting native controls (select popups, date pickers, scroll
+ * bars) — the root cause of the "white text on white input" UAT defect.
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --color-canvas: #f1f5f9;
+  --color-ink: #0f172a;
+  --color-navy-950: #070d1a;
+  --color-navy-900: #0b1426;
+  --color-navy-800: #142039;
+  --color-navy-700: #1e2d4d;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.06), 0 1px 3px 0 rgb(15 23 42 / 0.08);
+  --shadow-raised: 0 10px 30px -10px rgb(15 23 42 / 0.25), 0 4px 10px -6px rgb(15 23 42 / 0.12);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  background-color: var(--color-canvas);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Form controls never inherit an OS/dark-mode colour: explicit ink on white. */
+input,
+select,
+textarea {
+  color: var(--color-ink);
+  background-color: #ffffff;
+}
+
+select option,
+select optgroup {
+  color: var(--color-ink);
+  background-color: #ffffff;
+}
+
+::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+/* Remove number spinners: counts are typed, and spinners invite off-by-one clicks. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+::selection {
+  background-color: #bfdbfe;
+  color: #0f172a;
+}
+
+/* Native <dialog> backdrop for modals and the mobile navigation drawer. */
+dialog::backdrop {
+  background-color: rgb(7 13 26 / 0.55);
+  backdrop-filter: blur(2px);
+}
+
+dialog[open] {
+  animation: dialog-in 160ms ease-out;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
