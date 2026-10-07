@@ -48,6 +48,17 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
+      - name: Check the tag exists
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null; then
+            echo "::error title=Tag not found::'$TAG' does not exist in $GH_REPO. Tag the commit whose package.json version is ${TAG#v} and push the tag (git tag $TAG && git push origin $TAG) — this workflow then runs by itself."
+            exit 1
+          fi
+
       - name: Check out the tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
