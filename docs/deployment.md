@@ -25,8 +25,8 @@ A production **Docker image** is also published for self-hosting — see [Docker
 flowchart LR
   MAIN["Push / merge to main"] --> CI["CI/CD Pipeline<br/>lint · tests · E2E"]
   CI -- "green" --> DEP["Deploy Production<br/>(GitHub Actions)"]
-  DEP -- "1 · migrate<br/>direct connection" --> NEON[("Neon PostgreSQL<br/>Singapore")]
-  DEP -- "2 · build + deploy" --> APP["Vercel<br/>sin1 · Singapore"]
+  DEP -- "1 · migrate<br/>direct connection" --> NEON[("Neon PostgreSQL<br/>US East")]
+  DEP -- "2 · build + deploy" --> APP["Vercel<br/>iad1 · US East"]
   APP -- "queries<br/>pooled connection" --> NEON
   DEP -- "3 · smoke test" --> APP
 ```
@@ -35,9 +35,8 @@ flowchart LR
   so database migrations always run from a commit that passed CI, *before* the new code goes live.
 - **Every other branch and pull request** still gets a Vercel preview deployment. Previews use their own Neon
   branch, so they can never change production data.
-- **The app and the database run in the same region** — Vercel `sin1` and Neon `aws-ap-southeast-1`, both in
-  Singapore, the closest pair to the plant in Sri Lanka. Each page runs several queries; a database on another
-  continent would make every page slow.
+- **The app and the database run in the same region** — Vercel `iad1` (Washington, D.C.) and Neon `aws-us-east-1`
+  (N. Virginia). Each page runs several queries, so a database in another region would make every page slow.
 - **Two connection strings.** The app uses Neon's *pooled* connection (built for many short-lived serverless
   functions). Migrations use the *direct* connection.
 
@@ -45,7 +44,7 @@ What the repository already configures — nothing to change in the Vercel setti
 
 | File | What it does |
 | --- | --- |
-| `vercel.json` | Build command `npm run vercel-build`, function region `sin1`, no automatic production deploys from `main` |
+| `vercel.json` | Build command `npm run vercel-build`, function region `iad1`, no automatic production deploys from `main` |
 | `package.json` | `vercel-build` = `prisma generate && next build` (it never migrates); `engines` makes Vercel use Node.js 24 |
 | `prisma/schema.prisma` | `DATABASE_URL` for the app, `DIRECT_URL` for migrations, and the Prisma engine for Vercel's Linux runtime |
 | `.github/workflows/deploy-production.yml` | Migrate → build → deploy → smoke test |
@@ -67,7 +66,7 @@ You need:
    - **Project name:** `apparelflow`
    - **Postgres version:** keep the default
    - **Cloud provider:** AWS
-   - **Region:** **AWS Asia Pacific (Singapore)**. This must match `regions` in `vercel.json`, and Neon can't move a
+   - **Region:** **AWS US East (N. Virginia)**. This must match `regions` in `vercel.json`, and Neon can't move a
      project to another region later. To use another region, see [Using another region](#using-another-region).
 2. Neon creates a default branch (named `production` or `main`) with a database `neondb` and an owner role
    `neondb_owner`.
@@ -85,8 +84,8 @@ You need:
    For example (made-up values):
 
    ```text
-   DATABASE_URL  postgresql://neondb_owner:npg_XXXX@ep-cool-sun-a1b2c3d4-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require&pgbouncer=true&connection_limit=1&connect_timeout=15
-   DIRECT_URL    postgresql://neondb_owner:npg_XXXX@ep-cool-sun-a1b2c3d4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require&connect_timeout=15
+   DATABASE_URL  postgresql://neondb_owner:npg_XXXX@ep-cool-sun-a1b2c3d4-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require&pgbouncer=true&connection_limit=1&connect_timeout=15
+   DIRECT_URL    postgresql://neondb_owner:npg_XXXX@ep-cool-sun-a1b2c3d4.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require&connect_timeout=15
    ```
 
    What the parameters do:
@@ -97,6 +96,19 @@ You need:
 
 Keep both strings private: they contain the database password. If one leaks, reset the role's password in the Neon
 console and update it everywhere you used it (steps 2, 5 and 6).
+
+> **Created the database from Vercel instead** (Vercel → **Storage** → Neon)? That's the same Neon, managed through
+> Vercel. The differences:
+>
+> - Its region is the one you picked there. `regions` in `vercel.json` must be the matching Vercel region.
+> - Vercel shows its connection strings on the database's page: `DATABASE_URL` is the pooled one and
+>   `DATABASE_URL_UNPOOLED` the direct one. Add the parameters above when you use them in steps 2 and 6.
+> - Vercel adds `DATABASE_URL` to the project itself, so in step 5 you only add `AUTH_SECRET`. Leave Vercel's
+>   `DATABASE_URL` as it is — it works without the extra parameters.
+> - In the database's settings in Vercel, connect it to **Production** and **Preview** only (local development keeps
+>   your own database), and turn on preview branching — each preview deployment then gets its own Neon branch, which
+>   replaces step 3.
+> - Don't paste Vercel's `.env.local` snippet into `.env`: its `DATABASE_URL` would replace your local one.
 
 ## Step 2 — Create the tables and demo data
 
@@ -162,7 +174,8 @@ npx vercel@62 git connect --yes                      # connects the GitHub repos
 ## Step 5 — Add the environment variables
 
 In the Vercel dashboard open the project → **Settings → Environment Variables**. Add each row below as its own
-variable. Tick **only** the environment named in the row and choose the type **Secret**.
+variable. Tick **only** the environment named in the row and choose the type **Secret**. (Database created from
+Vercel's Storage tab? Then `DATABASE_URL` comes from the Neon integration — add only the `AUTH_SECRET` rows.)
 
 | Key | Environment | Value |
 | --- | --- | --- |
@@ -276,12 +289,12 @@ Pick a Neon region and the Vercel region next to it, and set the Vercel code in 
 
 | Neon region | Vercel region |
 | --- | --- |
-| AWS US East (N. Virginia) — `aws-us-east-1` | `iad1` |
+| AWS US East (N. Virginia) — `aws-us-east-1` | `iad1` (this repository's setting) |
 | AWS US East (Ohio) — `aws-us-east-2` | `cle1` |
 | AWS US West (Oregon) — `aws-us-west-2` | `pdx1` |
 | AWS Europe (Frankfurt) — `aws-eu-central-1` | `fra1` |
 | AWS Europe (London) — `aws-eu-west-2` | `lhr1` |
-| AWS Asia Pacific (Singapore) — `aws-ap-southeast-1` | `sin1` (this repository's default) |
+| AWS Asia Pacific (Singapore) — `aws-ap-southeast-1` | `sin1` |
 | AWS Asia Pacific (Sydney) — `aws-ap-southeast-2` | `syd1` |
 | AWS South America (São Paulo) — `aws-sa-east-1` | `gru1` |
 
@@ -328,7 +341,7 @@ Build the application image locally from the repository root with `npm run docke
 
 ## Production checklist
 
-- [ ] The Neon project and `regions` in `vercel.json` are in the same place (Singapore: `aws-ap-southeast-1` / `sin1`).
+- [ ] The Neon project and `regions` in `vercel.json` are in the same place (US East: `aws-us-east-1` / `iad1`).
 - [ ] Vercel's `DATABASE_URL` is the **pooled** string with `pgbouncer=true&connection_limit=1&connect_timeout=15`;
       the GitHub secret `PRODUCTION_DIRECT_URL` is the **direct** string.
 - [ ] Preview deployments use the `preview` Neon branch, never production.

@@ -7,7 +7,7 @@ sewing floor.
 
 | | |
 | --- | --- |
-| **Live demo** | _add your deployment URL here after `vercel deploy`_ |
+| **Live application** | [Open the ApparelFlow ERP production deployment](https://apparelflow-gatekeeper.vercel.app/) |
 | **Run locally** | `npm install` → `npm run db:setup` → `npm run dev`. No Docker needed — see the [quick start](#quick-start--run-locally-without-docker) |
 | **Stack** | Next.js 16 (App Router) · React 19 · TypeScript · PostgreSQL · Prisma 6 · Zod 4 · Tailwind CSS 4 |
 | **Tests** | 131 unit + integration tests (Vitest, real PostgreSQL) · 7 Playwright E2E journeys with axe-core WCAG 2.1 AA audits · deployment security audit (23 read-only / 33 full checks), also published as a GitHub Action |
