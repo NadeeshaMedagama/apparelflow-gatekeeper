@@ -11,7 +11,8 @@ that no client — and no future bug — can push an unverified batch onto the s
 | Tool | Used for |
 | --- | --- |
 | **Claude Code** (Anthropic's agentic coding CLI, Claude Opus model) | Reading the assessment PDF; architecture and schema design; Prisma schema and hand-written SQL migrations (integrity triggers, CHECK constraints, order-number sequence); domain logic; route handlers and services; the UI; unit, integration and end-to-end tests; documentation. It also ran the verification loop: TypeScript, ESLint, Vitest, Playwright, axe-core, cURL attack scripts and screenshot review. |
-| _Candidate to complete_ | _List any other AI tools you used yourself (e.g. for preparing the implementation roadmap) and what for._ |
+| **ChatGPT** | Helping prepare the implementation roadmap that was given to Claude Code. |
+| **GitHub Copilot** | Pull-request reviews, guided by the project rules in `.github/copilot-instructions.md`. Most reviews did not run because the Copilot quota ran out. |
 
 **Prompting approach.** The work was driven from two inputs supplied by the candidate: the assessment brief (PDF) and
 a detailed implementation roadmap (stack, schema, endpoint list, test plan, the evaluator's 5-minute demo). The
@@ -159,6 +160,28 @@ isolation, sessions and CSRF, the database guards, and the evaluator's browser j
 
 ## Candidate review log
 
-_To be completed by the candidate: what you verified yourself while reviewing the AI-generated code, any issues you
-found or changed, and why. Evaluators assess your engineering judgment — record your own findings here in your own
-words._
+**What I checked myself**
+
+* **Tests.** I ran the automated tests and checked that they pass.
+* **The live app.** I tested the deployed app with all three roles: a batch with a short count can't be approved
+  (*Approve batch* stays disabled), and the Sewing Queue shows only verified batches.
+* **Contrast.** I clicked the inputs and dropdowns to check that all text is easy to read.
+
+**What I decided or changed, and why**
+
+* **Plan first.** Before prompting, I wrote the implementation roadmap (with ChatGPT's help): stack, schema, endpoints
+  and test plan. That way Claude Code built to my plan instead of making its own choices.
+* **No commits by the AI.** I told Claude Code not to commit anything, so I could review every file before it went
+  into the repository. I then committed the work myself, in small commits through pull requests.
+* **Deployment region.** The Vercel config first used Singapore (`sin1`), but my Neon database is in US East, and Neon
+  can't move a database to another region. Each page runs several queries, so a database in another region makes
+  every page slow. I moved Vercel to US East (`iad1`) and updated the deployment docs.
+* **Release tag check.** I added a check to the release workflows: if a release is started with a tag that doesn't
+  exist, the workflow stops at once with a clear message that explains how to fix it.
+* **CodeQL alerts.** GitHub's CodeQL scan flagged 3 alerts in `scripts/audit-api.mjs`, a script Claude wrote. I went
+  through them with Claude Code:
+  * The CI summary table escaped `|` but not `\` or new lines, so some text could break the table. **Fixed.**
+  * "Clear-text logging of sensitive information" is a false alarm. The script logs only the HTTP status code, never
+    the password; CodeQL reacted to the variable name `badPassword`. **Dismissed.**
+  * "Network data written to file" is a false alarm. The file is the CI job summary, and writing the results there
+    is what the script is for. **Dismissed.**
