@@ -51,9 +51,9 @@ Add these under **Settings → Secrets and variables → Actions**.
 | --- | --- | --- |
 | `DOCKERHUB_USERNAME` | secret (or variable) | Publish Images to Docker Hub |
 | `DOCKERHUB_TOKEN` | secret — a Docker Hub access token (Read & Write) is recommended; a password also works | Publish Images to Docker Hub |
-| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | secrets | Deploy Production |
-| `PRODUCTION_DIRECT_URL` | secret — direct PostgreSQL URL | Deploy Production (migrations) |
-| `PRODUCTION_URL` | variable | Deploy Production (smoke test) |
+| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | secrets — how to get them: [Deployment, step 6](./deployment.md#step-6--connect-github-actions-to-vercel) | Deploy Production |
+| `PRODUCTION_DIRECT_URL` | secret — the Neon **direct** connection string | Deploy Production (migrations) |
+| `PRODUCTION_URL` | variable — the production domain, e.g. `https://apparelflow-erp.vercel.app` | Deploy Production (smoke test) |
 | `COPILOT_REVIEW_TOKEN` | optional secret | Copilot Code Review, if the built-in token cannot request Copilot |
 
 GHCR publishing uses the built-in `GITHUB_TOKEN`. Workflows whose secrets are missing skip with a warning instead of
