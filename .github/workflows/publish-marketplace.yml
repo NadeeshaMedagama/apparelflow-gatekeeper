@@ -36,6 +36,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Check the tag exists
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null; then
+            echo "::error title=Tag not found::'$TAG' does not exist in $GH_REPO. Push the tag first (git tag $TAG && git push origin $TAG) — that runs the Release workflow, which publishes the action."
+            exit 1
+          fi
+
       - name: Check out the release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
