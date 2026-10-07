@@ -260,7 +260,7 @@ function writeGitHubReport(passed, failed, skipped) {
   }
   if (!process.env.GITHUB_STEP_SUMMARY) return;
   const icon = { pass: "✅", fail: "❌", skip: "⏭️" };
-  const escape = (text) => String(text).replace(/\|/g, "\\|");
+  const escape = (text) => String(text).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
   const rows = results.map((result) => `| ${icon[result.status]} | ${escape(result.section)} | ${escape(result.label)} | ${escape(result.detail)} |`);
   const verdict = failed === 0 ? "✅ All executed checks passed" : `❌ ${failed} check(s) failed`;
   appendFileSync(
