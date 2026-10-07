@@ -1,0 +1,230 @@
+// ApparelFlow ERP — Cutting Operations & Gatekeeper Verification Terminal
+//
+// Relational model for the cutting → QC → sewing hand-off. Business invariants
+// are enforced in three layers:
+//   1. Domain services (src/server/services) — authoritative rules + HTTP errors.
+//   2. CHECK constraints and triggers (prisma/migrations/*_integrity_guards) —
+//      a last line of defence that holds even if application code is bypassed.
+//   3. Foreign keys with RESTRICT semantics so audit history cannot be orphaned.
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" for local development, rhel-openssl-3.0.x for Vercel's runtime.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Runtime connection (use the pooled URL on Neon / Supabase).
+  url       = env("DATABASE_URL")
+  // Direct, non-pooled connection used by `prisma migrate`.
+  directUrl = env("DIRECT_URL")
+}
+
+/// Factory personas. Each role maps to an isolated workspace and permission set.
+enum Role {
+  CUTTING_SUPERVISOR
+  CUTTING_VERIFIER
+  SEWING_SUPERVISOR
+}
+
+/// Deterministic production pipeline. Transitions are whitelisted in
+/// src/domain/state-machine.ts and re-checked by a database trigger.
+enum OrderStatus {
+  CUTTING_IN_PROGRESS
+  PENDING_VERIFICATION
+  REJECTED
+  VERIFIED
+  SEWING_IN_PROGRESS
+}
+
+/// Traffic-light result of comparing a physical count against the expected count.
+enum ComponentStatus {
+  GREEN
+  YELLOW
+  RED
+}
+
+enum VerificationDecision {
+  APPROVED
+  REJECTED
+}
+
+enum RejectionCategory {
+  COMPONENT_SHORTAGE
+  FABRIC_DEFECT
+  CUTTING_DEFECT
+  COUNT_MISMATCH
+  OTHER
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(254)
+  passwordHash String   @map("password_hash") @db.VarChar(100)
+  role         Role
+  fullName     String   @map("full_name") @db.VarChar(120)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  createdOrders       CuttingOrder[]     @relation("OrderCreatedBy")
+  sewingStartedOrders CuttingOrder[]     @relation("SewingStartedBy")
+  countedItems        VerificationItem[]
+  verificationLogs    VerificationLog[]
+  statusEvents        OrderStatusEvent[]
+
+  @@map("users")
+}
+
+/// Production recipe (Bill of Materials) for one garment style.
+model Recipe {
+  id             String   @id @default(uuid()) @db.Uuid
+  recipeCode     String   @unique @map("recipe_code") @db.VarChar(32)
+  name           String   @db.VarChar(120)
+  category       String   @db.VarChar(60)
+  /// Standard fabric consumption per garment, in yards.
+  stdFabricYards Decimal  @map("std_fabric_yards") @db.Decimal(8, 3)
+  /// Operational wastage ceiling, as a percentage (5.00 = 5%).
+  wastageCap     Decimal  @map("wastage_cap") @db.Decimal(5, 2)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  components    RecipeComponent[]
+  cuttingOrders CuttingOrder[]
+
+  @@map("recipes")
+}
+
+/// One cut part of a recipe, e.g. "Sleeve Cuffs — 2 pcs / garment".
+model RecipeComponent {
+  id               String  @id @default(uuid()) @db.Uuid
+  recipeId         String  @map("recipe_id") @db.Uuid
+  componentName    String  @map("component_name") @db.VarChar(120)
+  piecesPerGarment Int     @map("pieces_per_garment")
+  imageUrl         String? @map("image_url") @db.VarChar(255)
+  sortOrder        Int     @default(0) @map("sort_order")
+
+  recipe            Recipe                @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  verificationItems VerificationItem[]
+  logItems          VerificationLogItem[]
+
+  @@unique([recipeId, componentName])
+  @@map("recipe_components")
+}
+
+model CuttingOrder {
+  id                String      @id @default(uuid()) @db.Uuid
+  /// Human-readable batch number (CUT-YYYY-NNNN) issued by a database sequence.
+  orderNo           String      @unique @default(dbgenerated("next_cutting_order_no()")) @map("order_no") @db.VarChar(32)
+  recipeId          String      @map("recipe_id") @db.Uuid
+  targetQty         Int         @map("target_qty")
+  fabricRollId      String      @map("fabric_roll_id") @db.VarChar(40)
+  actualFabricYds   Decimal     @map("actual_fabric_yds") @db.Decimal(10, 2)
+  status            OrderStatus @default(CUTTING_IN_PROGRESS)
+  /// Incremented every time the batch is submitted to the QC station.
+  verificationRound Int         @default(0) @map("verification_round")
+  createdById       String      @map("created_by") @db.Uuid
+  submittedAt       DateTime?   @map("submitted_at") @db.Timestamptz(3)
+  verifiedAt        DateTime?   @map("verified_at") @db.Timestamptz(3)
+  sewingStartedAt   DateTime?   @map("sewing_started_at") @db.Timestamptz(3)
+  sewingStartedById String?     @map("sewing_started_by") @db.Uuid
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  recipe            Recipe             @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  createdBy         User               @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sewingStartedBy   User?              @relation("SewingStartedBy", fields: [sewingStartedById], references: [id], onDelete: Restrict)
+  verificationItems VerificationItem[]
+  verificationLogs  VerificationLog[]
+  statusEvents      OrderStatusEvent[]
+
+  @@index([status, submittedAt])
+  @@index([status, verifiedAt])
+  @@index([createdById])
+  @@map("cutting_orders")
+}
+
+/// Live count sheet for the current QC round: one row per recipe component.
+/// `status` is always derived server-side from actual vs expected (and a CHECK
+/// constraint rejects any row where it disagrees with the counts).
+model VerificationItem {
+  id          String           @id @default(uuid()) @db.Uuid
+  orderId     String           @map("order_id") @db.Uuid
+  componentId String           @map("component_id") @db.Uuid
+  expectedQty Int              @map("expected_qty")
+  /// NULL means "not counted yet".
+  actualQty   Int?             @map("actual_qty")
+  status      ComponentStatus?
+  countedById String?          @map("counted_by") @db.Uuid
+  countedAt   DateTime?        @map("counted_at") @db.Timestamptz(3)
+
+  order     CuttingOrder    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  component RecipeComponent @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  countedBy User?           @relation(fields: [countedById], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, componentId])
+  @@map("verification_items")
+}
+
+/// Immutable QC decision record (append-only — enforced by a database trigger).
+model VerificationLog {
+  id                String               @id @default(uuid()) @db.Uuid
+  orderId           String               @map("order_id") @db.Uuid
+  verifierId        String               @map("verifier_id") @db.Uuid
+  decision          VerificationDecision
+  round             Int
+  rejectionCategory RejectionCategory?   @map("rejection_category")
+  rejectionNote     String?              @map("rejection_note") @db.VarChar(1000)
+  approvalNote      String?              @map("approval_note") @db.VarChar(500)
+  /// [(actual fabric − expected fabric) ÷ expected fabric] × 100, computed server-side.
+  wastagePct        Decimal              @map("wastage_pct") @db.Decimal(9, 2)
+  wastageCap        Decimal              @map("wastage_cap") @db.Decimal(5, 2)
+  expectedFabricYds Decimal              @map("expected_fabric_yds") @db.Decimal(14, 3)
+  actualFabricYds   Decimal              @map("actual_fabric_yds") @db.Decimal(10, 2)
+  targetQty         Int                  @map("target_qty")
+  timestamp         DateTime             @default(now()) @db.Timestamptz(3)
+
+  order    CuttingOrder          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  verifier User                  @relation(fields: [verifierId], references: [id], onDelete: Restrict)
+  items    VerificationLogItem[]
+
+  @@unique([orderId, round])
+  @@index([timestamp])
+  @@index([verifierId])
+  @@map("verification_logs")
+}
+
+/// Frozen per-component snapshot written together with its VerificationLog.
+model VerificationLogItem {
+  id               String           @id @default(uuid()) @db.Uuid
+  logId            String           @map("log_id") @db.Uuid
+  componentId      String           @map("component_id") @db.Uuid
+  componentName    String           @map("component_name") @db.VarChar(120)
+  piecesPerGarment Int              @map("pieces_per_garment")
+  expectedQty      Int              @map("expected_qty")
+  actualQty        Int?             @map("actual_qty")
+  variance         Int?
+  status           ComponentStatus?
+
+  log       VerificationLog @relation(fields: [logId], references: [id], onDelete: Restrict)
+  component RecipeComponent @relation(fields: [componentId], references: [id], onDelete: Restrict)
+
+  @@unique([logId, componentId])
+  @@map("verification_log_items")
+}
+
+/// Append-only state transition history for every cutting order.
+model OrderStatusEvent {
+  id         Int          @id @default(autoincrement())
+  orderId    String       @map("order_id") @db.Uuid
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  actorId    String       @map("actor_id") @db.Uuid
+  note       String?      @db.VarChar(1000)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  order CuttingOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, id])
+  @@map("order_status_events")
+}
