@@ -13,7 +13,7 @@
 #   docker run --rm -e DATABASE_URL=... -e DIRECT_URL=... apparelflow-erp-migrator
 # -----------------------------------------------------------------------------
 
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS base
+FROM node:24.22.0-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 # OpenSSL is required by the Prisma query engine (and its platform detection).
 # Package versions are intentionally not pinned: the base image is pinned by digest,
